@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Production builds
+dist/
+build/
+
+# Local Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Local SQLite databases
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.sqlite*
+
+# Uploaded media (keep folder via .gitkeep)
+uploads/*
+!uploads/.gitkeep
+
+# Testing & Coverage
+coverage/
+.nyc_output/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# System & OS artifacts
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
