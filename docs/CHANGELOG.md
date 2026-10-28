@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.0] - 2026-10-29
+
+### Fixed
+- **Vercel Production Login Failure**:
+  - Resolved root cause where the Express backend was not deployed on Vercel, causing the static frontend to receive a 404 HTML error page when calling `POST /api/v1/auth/login`.
+  - Added Vercel Serverless Function entry point (`api/index.js`) exposing the Express application handler.
+  - Added `vercel.json` rewrites mapping `/api/(.*)` and `/uploads/(.*)` to the serverless function, with SPA fallback to `/index.html`.
+  - Added `VITE_API_URL` environment variable support in `src/client/App.jsx` allowing both same-origin serverless deployment and remote external API host configurations.
+  - Hardened database directory initialization in `src/server/db/schema.js` and upload directory in `src/server/app.js` and `src/server/middleware/upload.js` against AWS Lambda / Vercel read-only filesystem restrictions (`EROFS`), defaulting to `/tmp` in serverless environments.
+  - Improved login error handling in `src/client/App.jsx` with HTTP status code awareness (distinguishing 404 not found, 5xx server error, 401 invalid credentials, and true network errors).
+  - Added automated test suite `tests/integration/vercel-deployment.test.js` validating serverless entry point routing, role authentication, and error handling (39/39 passing tests).
+
 ## [1.4.0] - 2026-10-28
 
 ### Added
