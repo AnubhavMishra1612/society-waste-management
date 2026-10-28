@@ -27,9 +27,15 @@ export function createApp(customDb = null) {
   app.use(express.urlencoded({ extended: true }));
 
   // Static uploads directory
-  const uploadsDir = path.resolve(__dirname, '../../uploads');
+  const isVercel = Boolean(process.env.VERCEL);
+  const defaultUploadsDir = isVercel ? path.join('/tmp', 'uploads') : path.resolve(__dirname, '../../uploads');
+  const uploadsDir = process.env.LOCAL_UPLOAD_PATH || defaultUploadsDir;
   if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
+    try {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    } catch (err) {
+      console.warn(`[SocietyClean] Note: uploads directory ${uploadsDir} could not be created (${err.message}).`);
+    }
   }
   app.use('/uploads', express.static(uploadsDir, {
     dotfiles: 'ignore',

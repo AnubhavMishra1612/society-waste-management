@@ -34,6 +34,15 @@ const CATEGORIES = [
   { id: 'OTHER', label: 'Other Waste Issue', emoji: '📦', desc: 'Bulky trash or general sanitation' }
 ];
 
+// Production API base configuration: Supports custom remote backend or same-origin fallback
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+const apiUrl = (path) => `${API_BASE}${path}`;
+const resolveAssetUrl = (url) => {
+  if (!url) return null;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  return `${API_BASE}${url}`;
+};
+
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [token, setToken] = useState(null);
@@ -216,15 +225,41 @@ export default function App() {
 
     try {
       setLoginLoading(true);
-      const res = await fetch('/api/v1/auth/login', {
+      const res = await fetch(apiUrl('/api/v1/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: emailTrim, password: loginPassword })
       });
 
-      const data = await res.json();
-      if (!data.success) {
-        setLoginError(data.error?.message || 'Invalid email or password. Please verify your credentials.');
+      const contentType = res.headers.get('content-type') || '';
+      let data = null;
+      if (contentType.includes('application/json')) {
+        try {
+          data = await res.json();
+        } catch (jsonErr) {
+          data = null;
+        }
+      }
+
+      if (!res.ok) {
+        if (res.status === 404) {
+          setLoginError(
+            'Authentication endpoint not found (404). Please ensure the backend is deployed and that VITE_API_URL is properly configured.'
+          );
+        } else if (res.status >= 500) {
+          setLoginError(
+            `Authentication service error (${res.status}). The server may still be initializing or unavailable.`
+          );
+        } else {
+          setLoginError(
+            data?.error?.message || 'Invalid email or password. Please verify your credentials.'
+          );
+        }
+        return;
+      }
+
+      if (!data || !data.success) {
+        setLoginError(data?.error?.message || 'Invalid email or password. Please verify your credentials.');
         return;
       }
 
@@ -262,7 +297,9 @@ export default function App() {
 
       showToast(`Welcome back, ${authenticatedUser.fullName}! (${serverRole.toUpperCase()})`);
     } catch (err) {
-      setLoginError('Network error: Unable to connect to authentication server. Please check your connection.');
+      setLoginError(
+        'Network error: Unable to connect to authentication server. Please check your connection or verify the API host.'
+      );
     } finally {
       setLoginLoading(false);
     }
@@ -287,7 +324,7 @@ export default function App() {
   const fetchMyComplaints = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/v1/complaints/my', {
+      const res = await fetch(apiUrl('/api/v1/complaints/my'), {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.status === 401) {
@@ -307,7 +344,7 @@ export default function App() {
     try {
       setLoading(true);
       // Fetch overview KPIs
-      const kpiRes = await fetch('/api/v1/analytics/overview', {
+      const kpiRes = await fetch(apiUrl('/api/v1/analytics/overview'), {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (kpiRes.status === 401) {
@@ -324,7 +361,7 @@ export default function App() {
       if (wingFilter !== 'ALL') params.set('wing', wingFilter);
       if (searchQuery) params.set('search', searchQuery);
 
-      const compRes = await fetch(`/api/v1/complaints?${params.toString()}`, {
+      const compRes = await fetch(apiUrl(`/api/v1/complaints?${params.toString()}`), {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (compRes.status === 401) {
@@ -345,7 +382,7 @@ export default function App() {
 
   const fetchActiveStaffForAssignment = async () => {
     try {
-      const staffRes = await fetch('/api/v1/users/staff?status=active', {
+      const staffRes = await fetch(apiUrl('/api/v1/users/staff?status=active'), {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (staffRes.status === 401) {
@@ -371,7 +408,7 @@ export default function App() {
       if (staffStatusFilter !== 'all') params.set('status', staffStatusFilter);
       if (staffSearchQuery.trim()) params.set('search', staffSearchQuery.trim());
 
-      const res = await fetch(`/api/v1/users/staff?${params.toString()}`, {
+      const res = await fetch(apiUrl(`/api/v1/users/staff?${params.toString()}`), {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.status === 401) {
@@ -393,7 +430,7 @@ export default function App() {
   const fetchStaffTasks = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/v1/complaints?status=IN_PROGRESS', {
+      const res = await fetch(apiUrl('/api/v1/complaints?status=IN_PROGRESS'), {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.status === 401) {
@@ -412,7 +449,7 @@ export default function App() {
   const fetchSchedules = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/v1/schedules', {
+      const res = await fetch(apiUrl('/api/v1/schedules'), {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.status === 401) {
@@ -459,7 +496,7 @@ export default function App() {
       formData.append('description', formDesc.trim());
       if (formPhoto) formData.append('photo', formPhoto);
 
-      const res = await fetch('/api/v1/complaints', {
+      const res = await fetch(apiUrl('/api/v1/complaints'), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData
@@ -498,7 +535,7 @@ export default function App() {
     }
     try {
       setAssigningLoading(true);
-      const res = await fetch(`/api/v1/complaints/${assignModalComplaint.id}/assign`, {
+      const res = await fetch(apiUrl(`/api/v1/complaints/${assignModalComplaint.id}/assign`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -538,7 +575,7 @@ export default function App() {
       formData.append('resolutionNotes', resolveNotes || 'Area thoroughly cleared and disinfected.');
       if (resolvePhoto) formData.append('resolutionPhoto', resolvePhoto);
 
-      const res = await fetch(`/api/v1/complaints/${resolveModalComplaint.id}/resolve`, {
+      const res = await fetch(apiUrl(`/api/v1/complaints/${resolveModalComplaint.id}/resolve`), {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData
@@ -565,7 +602,7 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch(`/api/v1/complaints/${complaintId}/reopen`, {
+      const res = await fetch(apiUrl(`/api/v1/complaints/${complaintId}/reopen`), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -590,7 +627,7 @@ export default function App() {
 
   const viewComplaintDetail = async (id) => {
     try {
-      const res = await fetch(`/api/v1/complaints/${id}`, {
+      const res = await fetch(apiUrl(`/api/v1/complaints/${id}`), {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -619,7 +656,7 @@ export default function App() {
 
     try {
       setAddStaffLoading(true);
-      const res = await fetch('/api/v1/users/staff', {
+      const res = await fetch(apiUrl('/api/v1/users/staff'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -679,7 +716,7 @@ export default function App() {
 
     try {
       setEditStaffLoading(true);
-      const res = await fetch(`/api/v1/users/staff/${editStaffForm.id}`, {
+      const res = await fetch(apiUrl(`/api/v1/users/staff/${editStaffForm.id}`), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -718,7 +755,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`/api/v1/users/staff/${staff.id}/status`, {
+      const res = await fetch(apiUrl(`/api/v1/users/staff/${staff.id}/status`), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -811,8 +848,8 @@ export default function App() {
     try {
       setScheduleLoading(true);
       const url = scheduleModalMode === 'create' 
-        ? '/api/v1/schedules' 
-        : `/api/v1/schedules/${scheduleForm.id}`;
+        ? apiUrl('/api/v1/schedules') 
+        : apiUrl(`/api/v1/schedules/${scheduleForm.id}`);
       const method = scheduleModalMode === 'create' ? 'POST' : 'PUT';
 
       const res = await fetch(url, {
@@ -852,7 +889,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch(`/api/v1/schedules/${s.id}`, {
+      const res = await fetch(apiUrl(`/api/v1/schedules/${s.id}`), {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -1939,13 +1976,13 @@ export default function App() {
                 {selectedComplaint.photo_url && (
                   <div>
                     <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-neutral-600)', marginBottom: '0.25rem' }}>Before (Reported Incident)</div>
-                    <img src={selectedComplaint.photo_url} alt="Before" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
+                    <img src={resolveAssetUrl(selectedComplaint.photo_url)} alt="Before" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
                   </div>
                 )}
                 {selectedComplaint.resolution_photo_url && (
                   <div>
                     <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-resolved)', marginBottom: '0.25rem' }}>After (Resolution Proof)</div>
-                    <img src={selectedComplaint.resolution_photo_url} alt="After" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
+                    <img src={resolveAssetUrl(selectedComplaint.resolution_photo_url)} alt="After" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
                   </div>
                 )}
               </div>

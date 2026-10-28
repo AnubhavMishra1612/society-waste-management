@@ -6,16 +6,30 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Ensure data directory exists
-const dataDir = path.resolve(__dirname, '../../../data');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
+const isVercel = Boolean(process.env.VERCEL);
+const defaultDataDir = isVercel ? '/tmp' : path.resolve(__dirname, '../../../data');
+const dataDir = process.env.DATA_DIR || defaultDataDir;
+
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (err) {
+      console.warn(`[SocietyClean] Note: directory ${dir} could not be created automatically (${err.message}).`);
+    }
+  }
 }
 
-const defaultDbPath = path.join(dataDir, 'societyclean.db');
+export function initDatabase(dbPath) {
+  const targetDbPath = dbPath || process.env.DATABASE_PATH || (
+    isVercel ? path.join('/tmp', 'societyclean.db') : path.join(dataDir, 'societyclean.db')
+  );
 
-export function initDatabase(dbPath = defaultDbPath) {
-  const db = new Database(dbPath);
+  if (targetDbPath !== ':memory:') {
+    ensureDir(path.dirname(targetDbPath));
+  }
+
+  const db = new Database(targetDbPath);
 
   // Enable WAL mode for high concurrency & Foreign Keys
   db.pragma('journal_mode = WAL');
