@@ -1,4 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+
+// Extract clean user initials (e.g. "Anita Deshmukh" -> "AD")
+const getUserInitials = (name) => {
+  if (!name || typeof name !== 'string') return 'SC';
+  const clean = name.trim();
+  if (!clean) return 'SC';
+  const words = clean
+    .split(/\s+/)
+    .map(w => w.replace(/[^a-zA-Z0-9]/g, ''))
+    .filter(Boolean);
+
+  if (words.length === 0) return 'SC';
+  if (words.length === 1) {
+    return words[0].slice(0, 2).toUpperCase();
+  }
+  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+};
 
 // Demo personas for instant switching & testing
 const DEMO_USERS = [
@@ -48,6 +65,8 @@ export default function App() {
   const [token, setToken] = useState(null);
   const [activeTab, setActiveTab] = useState('report');
   const [toastMessage, setToastMessage] = useState(null);
+  const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const profileMenuRef = useRef(null);
 
   // Data states
   const [complaints, setComplaints] = useState([]);
@@ -89,6 +108,8 @@ export default function App() {
   const [resolveModalComplaint, setResolveModalComplaint] = useState(null);
   const [resolveNotes, setResolveNotes] = useState('');
   const [resolvePhoto, setResolvePhoto] = useState(null);
+  const [resolvePhotoPreview, setResolvePhotoPreview] = useState(null);
+  const [resolvingLoading, setResolvingLoading] = useState(false);
 
   // Modal states: Reopen
   const [reopenReason, setReopenReason] = useState('');
@@ -170,6 +191,7 @@ export default function App() {
     if (!window.confirm('Are you sure you want to sign out of your account?')) {
       return;
     }
+    setProfileDropdownOpen(false);
     setToken(null);
     setCurrentUser(null);
     setComplaints([]);
@@ -185,6 +207,7 @@ export default function App() {
 
   // Handle Token Expiry
   const handleSessionExpired = () => {
+    setProfileDropdownOpen(false);
     setToken(null);
     setCurrentUser(null);
     setComplaints([]);
@@ -196,6 +219,33 @@ export default function App() {
     setLoginError('Your session has expired or is unauthorized. Please sign in again.');
     showToast('Session expired. Please sign in again.');
   };
+
+  // Close profile dropdown card on outside click or Escape key press
+  useEffect(() => {
+    if (!profileDropdownOpen) return;
+
+    const handleOutsideClick = (e) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target)) {
+        setProfileDropdownOpen(false);
+      }
+    };
+
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setProfileDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [profileDropdownOpen]);
 
   // Demo Presentation Quick-Fill (Passwords are pre-filled in masked input, never printed in plaintext)
   const handleFillDemo = (roleKey) => {
@@ -266,7 +316,7 @@ export default function App() {
       const authenticatedUser = data.data.user;
       const serverRole = authenticatedUser.role; // 'resident', 'manager', 'staff'
 
-      // Requirement 5: Role selection as UI hint only. Verify actual server role.
+      // Role selection verification
       if (serverRole !== selectedRole) {
         const roleNames = {
           resident: 'Resident',
@@ -308,7 +358,7 @@ export default function App() {
   // Fetch relevant data on tab or filter change
   useEffect(() => {
     if (!token) return;
-    if (activeTab === 'my_complaints') {
+    if (activeTab === 'my_complaints' || activeTab === 'report') {
       fetchMyComplaints();
     } else if (activeTab === 'manager_hub') {
       fetchManagerData();
@@ -476,6 +526,17 @@ export default function App() {
     setFormPhotoPreview(URL.createObjectURL(file));
   };
 
+  const handleResolvePhotoSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('Image file size must be less than 5MB');
+      return;
+    }
+    setResolvePhoto(file);
+    setResolvePhotoPreview(URL.createObjectURL(file));
+  };
+
   const handleSubmitComplaint = async (e) => {
     e.preventDefault();
     if (!formFloor.trim()) {
@@ -552,7 +613,6 @@ export default function App() {
         setAssignModalComplaint(null);
         setAssignInstructions('');
         
-        // Instant updates without manual reload
         fetchManagerData();
         fetchActiveStaffForAssignment();
         if (selectedComplaint && selectedComplaint.id === assignModalComplaint.id) {
@@ -571,6 +631,7 @@ export default function App() {
   const handleResolveSubmit = async () => {
     if (!resolveModalComplaint) return;
     try {
+      setResolvingLoading(true);
       const formData = new FormData();
       formData.append('resolutionNotes', resolveNotes || 'Area thoroughly cleared and disinfected.');
       if (resolvePhoto) formData.append('resolutionPhoto', resolvePhoto);
@@ -586,6 +647,7 @@ export default function App() {
         setResolveModalComplaint(null);
         setResolveNotes('');
         setResolvePhoto(null);
+        setResolvePhotoPreview(null);
         if (currentUser.role === 'staff') fetchStaffTasks();
         else fetchManagerData();
       } else {
@@ -593,6 +655,8 @@ export default function App() {
       }
     } catch (err) {
       showToast('Failed to resolve complaint.');
+    } finally {
+      setResolvingLoading(false);
     }
   };
 
@@ -905,13 +969,13 @@ export default function App() {
     }
   };
 
-  // Unauthenticated Entry: Render Professional Login Screen
+  // Unauthenticated Entry: Render Professional Civic Login Screen
   if (!currentUser || !token) {
     return (
       <div className="auth-page-wrapper">
         <div className="auth-card">
           <div className="auth-header">
-            <div className="auth-brand-icon">♻️</div>
+            <div className="auth-brand-icon" aria-hidden="true">♻️</div>
             <h1 className="auth-title">
               SocietyClean
               <span className="brand-tag">Portal</span>
@@ -920,53 +984,67 @@ export default function App() {
               Residential Waste Management & Housekeeping Coordination
             </p>
             <div className="auth-society-badge">
-              🏢 Green Vista CHS • Society ID: GREEN-VISTA-01
+              <span>🏢</span> Green Vista CHS • ID: GREEN-VISTA-01
             </div>
           </div>
 
           {/* Role Portal Selection Tabs */}
-          <div className="auth-roles-section">
-            <label className="auth-roles-label">Select Access Portal</label>
-            <div className="auth-role-grid">
-              <div
+          <div className="auth-roles-section" role="region" aria-label="Access portal selection">
+            <label className="auth-roles-label" id="portal-selector-label">
+              Select Access Portal
+            </label>
+            <div className="auth-role-grid" role="tablist" aria-labelledby="portal-selector-label">
+              <button
+                type="button"
+                role="tab"
+                id="portal-tab-resident"
+                aria-selected={selectedRole === 'resident'}
                 className={`auth-role-card ${selectedRole === 'resident' ? 'selected' : ''}`}
                 onClick={() => { setSelectedRole('resident'); setLoginError(null); }}
               >
-                <span className="auth-role-emoji">🏠</span>
+                <span className="auth-role-emoji" aria-hidden="true">🏠</span>
                 <span className="auth-role-name">Resident</span>
-                <span className="auth-role-desc">Report & Track Issues</span>
-              </div>
+                <span className="auth-role-desc">Report & Track</span>
+              </button>
 
-              <div
+              <button
+                type="button"
+                role="tab"
+                id="portal-tab-staff"
+                aria-selected={selectedRole === 'staff'}
                 className={`auth-role-card ${selectedRole === 'staff' ? 'selected' : ''}`}
                 onClick={() => { setSelectedRole('staff'); setLoginError(null); }}
               >
-                <span className="auth-role-emoji">🧹</span>
+                <span className="auth-role-emoji" aria-hidden="true">🧹</span>
                 <span className="auth-role-name">Staff</span>
-                <span className="auth-role-desc">Task Queue & Proof</span>
-              </div>
+                <span className="auth-role-desc">Task Queue</span>
+              </button>
 
-              <div
+              <button
+                type="button"
+                role="tab"
+                id="portal-tab-manager"
+                aria-selected={selectedRole === 'manager'}
                 className={`auth-role-card ${selectedRole === 'manager' ? 'selected' : ''}`}
                 onClick={() => { setSelectedRole('manager'); setLoginError(null); }}
               >
-                <span className="auth-role-emoji">📋</span>
+                <span className="auth-role-emoji" aria-hidden="true">📋</span>
                 <span className="auth-role-name">Manager</span>
-                <span className="auth-role-desc">Ops Hub & Schedules</span>
-              </div>
+                <span className="auth-role-desc">Ops & Roster</span>
+              </button>
             </div>
           </div>
 
           {/* Error Banner */}
           {loginError && (
-            <div className="auth-error-alert" role="alert">
-              <span>⚠️</span>
+            <div className="auth-error-alert" role="alert" aria-live="polite">
+              <span aria-hidden="true">⚠️</span>
               <div>{loginError}</div>
             </div>
           )}
 
           {/* Login Form */}
-          <form onSubmit={handleLoginSubmit}>
+          <form onSubmit={handleLoginSubmit} noValidate>
             <div className="form-group">
               <label className="form-label" htmlFor="login-email">
                 Email Address <span className="req">*</span>
@@ -1019,7 +1097,7 @@ export default function App() {
             <button
               type="submit"
               className="btn-primary"
-              style={{ width: '100%', marginTop: '0.75rem', padding: '0.85rem' }}
+              style={{ width: '100%', marginTop: '0.5rem', minHeight: '46px' }}
               disabled={loginLoading}
             >
               {loginLoading
@@ -1028,49 +1106,52 @@ export default function App() {
             </button>
           </form>
 
-          {/* College Demo One-Click Fill (Masked password, never revealed in plaintext) */}
+          {/* Presentation Quick-Fill (Preserved for College Project Demonstration) */}
           <div className="auth-demo-helper">
             <div className="auth-demo-header">
               <span className="auth-demo-title">🎓 Presentation Quick-Fill</span>
-              <span className="auth-demo-tip">Pre-fills masked credentials</span>
+              <span className="auth-demo-tip">Masked credentials helper</span>
             </div>
             <div className="auth-demo-grid">
               <button
                 type="button"
                 className="auth-demo-btn"
                 onClick={() => handleFillDemo('resident')}
+                title="Fill verified Resident demo credentials"
               >
-                <span>🏠 Rajesh Sharma</span>
+                <span>🏠 Rajesh Sharma (Wing B)</span>
                 <span className="auth-demo-btn-role">Resident</span>
               </button>
               <button
                 type="button"
                 className="auth-demo-btn"
                 onClick={() => handleFillDemo('staff')}
+                title="Fill verified Housekeeping Staff demo credentials"
               >
-                <span>🧹 Ramesh Kumar</span>
+                <span>🧹 Ramesh Kumar (Housekeeping)</span>
                 <span className="auth-demo-btn-role">Staff</span>
               </button>
               <button
                 type="button"
                 className="auth-demo-btn"
                 onClick={() => handleFillDemo('manager')}
+                title="Fill verified Society Manager demo credentials"
               >
-                <span>📋 Anita Deshmukh</span>
+                <span>📋 Anita Deshmukh (Secretary)</span>
                 <span className="auth-demo-btn-role">Manager</span>
               </button>
             </div>
           </div>
 
           <div className="auth-security-note">
-            🔐 Session protected by JWT encryption • Multi-tenant society scoping
+            🔒 Stateless JWT session • Multi-tenant society boundary enforced
           </div>
         </div>
 
         {/* Floating Toast Notification */}
         {toastMessage && (
-          <div className="toast">
-            <span>ℹ️</span>
+          <div className="toast" role="status" aria-live="polite">
+            <span aria-hidden="true">ℹ️</span>
             <span>{toastMessage}</span>
           </div>
         )}
@@ -1078,85 +1159,143 @@ export default function App() {
     );
   }
 
+  // Resident summary metrics calculated from real loaded data
+  const residentSummary = {
+    total: complaints.length,
+    pending: complaints.filter(c => c.status === 'PENDING').length,
+    inProgress: complaints.filter(c => c.status === 'IN_PROGRESS').length,
+    resolved: complaints.filter(c => c.status === 'RESOLVED').length
+  };
+
   return (
     <div className="app-layout">
       {/* Top Navigation */}
-      <header className="top-nav">
+      <header className="top-nav" role="banner">
         <div className="nav-inner">
           <div className="brand-wrapper">
-            <div className="brand-icon">♻️</div>
-            <div>
-              <div className="brand-title">
-                SocietyClean
-                <span className="brand-tag">Waste Portal</span>
-              </div>
+            <div className="brand-icon" aria-hidden="true">♻️</div>
+            <div className="brand-title">
+              SocietyClean
+              <span className="brand-tag">Portal</span>
             </div>
           </div>
 
-          <div className="nav-actions">
-            {currentUser && (
-              <div className="user-badge">
-                <div className="user-avatar">{currentUser.fullName?.charAt(0) || 'U'}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                  <span style={{ fontWeight: 600 }}>{currentUser.fullName}</span>
-                  <span
-                    className={`badge badge-${currentUser.role}`}
-                    style={{ fontSize: '0.65rem', padding: '0.15rem 0.45rem' }}
-                  >
-                    {currentUser.role.toUpperCase()}
-                  </span>
-                </div>
-              </div>
-            )}
+          {currentUser && (
+            <div className="profile-menu-container" ref={profileMenuRef}>
+              <button
+                type="button"
+                className={`profile-avatar-btn ${profileDropdownOpen ? 'active' : ''}`}
+                onClick={() => setProfileDropdownOpen((prev) => !prev)}
+                aria-expanded={profileDropdownOpen}
+                aria-haspopup="true"
+                aria-label={`User profile menu for ${currentUser.fullName}`}
+                title={`User profile menu for ${currentUser.fullName}`}
+              >
+                {getUserInitials(currentUser.fullName)}
+              </button>
 
-            <button
-              type="button"
-              className="btn-logout"
-              onClick={handleLogout}
-              title="Sign out of your account"
-            >
-              🚪 Sign Out
-            </button>
-          </div>
+              {profileDropdownOpen && (
+                <div
+                  className="profile-dropdown-card"
+                  role="menu"
+                  aria-label="User profile options"
+                >
+                  {/* Profile Header */}
+                  <div className="profile-card-header">
+                    <div className="profile-card-avatar" aria-hidden="true">
+                      {getUserInitials(currentUser.fullName)}
+                    </div>
+                    <div className="profile-card-user">
+                      <div className="profile-card-name">{currentUser.fullName}</div>
+                      <span className={`badge badge-${currentUser.role} profile-card-role`}>
+                        {currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Contact Information */}
+                  <div className="profile-card-contact">
+                    <div className="profile-contact-row">
+                      <span className="profile-contact-icon" aria-hidden="true">✉️</span>
+                      <span className="profile-contact-text profile-contact-email" title={currentUser.email}>
+                        {currentUser.email}
+                      </span>
+                    </div>
+                    <div className="profile-contact-row">
+                      <span className="profile-contact-icon" aria-hidden="true">📞</span>
+                      <span className={`profile-contact-text ${!currentUser.phone ? 'profile-contact-missing' : ''}`}>
+                        {currentUser.phone ? currentUser.phone : 'Phone not added'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Divider */}
+                  <div className="profile-card-divider" />
+
+                  {/* Actions */}
+                  <div className="profile-card-actions">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="profile-signout-btn"
+                      onClick={() => {
+                        setProfileDropdownOpen(false);
+                        handleLogout();
+                      }}
+                    >
+                      <span className="profile-signout-icon" aria-hidden="true">🚪</span>
+                      <span>Sign Out</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
       {/* Main Container */}
-      <main className="main-content">
+      <main className="main-content" role="main">
         {/* Society Hero Banner */}
-        <section className="hero-banner">
+        <section className="hero-banner" aria-label="Society Information Overview">
           <div className="hero-info">
             <h1>Green Vista Cooperative Housing Society</h1>
             <div className="hero-subtitle">
               <span>📍 Sector 14, Mumbai</span>
-              <span>•</span>
+              <span aria-hidden="true">•</span>
               <span>Society ID: <strong>GREEN-VISTA-01</strong></span>
-              <span>•</span>
-              <span>Role: <strong style={{ color: 'var(--color-primary-400)', textTransform: 'capitalize' }}>{currentUser?.role}</strong></span>
+              <span aria-hidden="true">•</span>
+              <span>Portal: <strong style={{ color: 'var(--color-primary-300)', textTransform: 'capitalize' }}>{currentUser?.role}</strong></span>
             </div>
           </div>
           <div className="hero-pickup-card">
-            <div className="pickup-icon">🌿</div>
+            <div className="pickup-icon" aria-hidden="true">🌿</div>
             <div>
-              <div style={{ fontWeight: 700, color: 'var(--color-white)' }}>Today's Scheduled Pickup</div>
+              <div style={{ fontWeight: 700, color: 'var(--color-white)' }}>Today's Waste Timetable</div>
               <div style={{ color: 'var(--color-primary-200)', fontSize: '0.8rem' }}>
-                Wet Waste: 8:00 AM - 10:00 AM (Daily)
+                Wet Waste: 8:00 AM - 10:00 AM (Daily Pickup)
               </div>
             </div>
           </div>
         </section>
 
         {/* Dynamic Navigation Tabs */}
-        <nav className="tabs-nav">
+        <nav className="tabs-nav" role="tablist" aria-label="Dashboard views">
           {currentUser?.role === 'resident' && (
             <>
               <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'report'}
                 className={`tab-btn ${activeTab === 'report' ? 'active' : ''}`}
                 onClick={() => setActiveTab('report')}
               >
                 📝 Report Waste Issue
               </button>
               <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'my_complaints'}
                 className={`tab-btn ${activeTab === 'my_complaints' ? 'active' : ''}`}
                 onClick={() => setActiveTab('my_complaints')}
               >
@@ -1169,6 +1308,9 @@ export default function App() {
           {currentUser?.role === 'manager' && (
             <>
               <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'manager_hub'}
                 className={`tab-btn ${activeTab === 'manager_hub' ? 'active' : ''}`}
                 onClick={() => setActiveTab('manager_hub')}
               >
@@ -1176,6 +1318,9 @@ export default function App() {
                 <span className="tab-count">{complaints.length}</span>
               </button>
               <button
+                type="button"
+                role="tab"
+                aria-selected={activeTab === 'manage_staff'}
                 className={`tab-btn ${activeTab === 'manage_staff' ? 'active' : ''}`}
                 onClick={() => setActiveTab('manage_staff')}
               >
@@ -1187,6 +1332,9 @@ export default function App() {
 
           {currentUser?.role === 'staff' && (
             <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'staff_queue'}
               className={`tab-btn ${activeTab === 'staff_queue' ? 'active' : ''}`}
               onClick={() => setActiveTab('staff_queue')}
             >
@@ -1196,6 +1344,9 @@ export default function App() {
           )}
 
           <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'schedule'}
             className={`tab-btn ${activeTab === 'schedule' ? 'active' : ''}`}
             onClick={() => setActiveTab('schedule')}
           >
@@ -1207,28 +1358,42 @@ export default function App() {
         {activeTab === 'report' && currentUser?.role === 'resident' && (
           <div className="report-form-grid">
             <div className="clean-card">
-              <h2 style={{ fontSize: '1.25rem', marginBottom: '0.5rem', color: 'var(--color-primary-900)' }}>
+              <h2 style={{ fontSize: '1.25rem', marginBottom: '0.35rem', color: 'var(--color-primary-900)' }}>
                 Report Sanitation or Waste Incident
               </h2>
-              <p style={{ color: 'var(--color-neutral-600)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+              <p style={{ color: 'var(--color-neutral-600)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
                 Provide exact location details and an optional photo. Housekeeping will be dispatched immediately.
               </p>
 
               <form onSubmit={handleSubmitComplaint}>
                 {/* Category Selection Grid */}
                 <div className="form-group">
-                  <label className="form-label">
+                  <label className="form-label" id="category-select-label">
                     Select Issue Category <span className="req">*</span>
                   </label>
-                  <div className="category-selection-grid">
+                  <div
+                    className="category-selection-grid"
+                    role="radiogroup"
+                    aria-labelledby="category-select-label"
+                  >
                     {CATEGORIES.map((cat) => (
                       <div
                         key={cat.id}
+                        role="radio"
+                        aria-checked={formCategory === cat.id}
+                        tabIndex={0}
                         className={`category-card ${formCategory === cat.id ? 'selected' : ''}`}
                         onClick={() => setFormCategory(cat.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === ' ' || e.key === 'Enter') {
+                            e.preventDefault();
+                            setFormCategory(cat.id);
+                          }
+                        }}
                       >
-                        <span className="cat-emoji">{cat.emoji}</span>
+                        <span className="cat-emoji" aria-hidden="true">{cat.emoji}</span>
                         <span className="cat-name">{cat.label}</span>
+                        <span className="cat-desc">{cat.desc}</span>
                       </div>
                     ))}
                   </div>
@@ -1237,8 +1402,11 @@ export default function App() {
                 {/* Location row */}
                 <div className="form-row-2">
                   <div className="form-group">
-                    <label className="form-label">Wing / Tower <span className="req">*</span></label>
+                    <label className="form-label" htmlFor="form-wing-select">
+                      Wing / Tower <span className="req">*</span>
+                    </label>
                     <select
+                      id="form-wing-select"
                       className="form-select"
                       value={formWing}
                       onChange={(e) => setFormWing(e.target.value)}
@@ -1249,8 +1417,11 @@ export default function App() {
                     </select>
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Floor or Collection Point <span className="req">*</span></label>
+                    <label className="form-label" htmlFor="form-floor-input">
+                      Floor or Collection Point <span className="req">*</span>
+                    </label>
                     <input
+                      id="form-floor-input"
                       type="text"
                       className="form-input"
                       placeholder="e.g. Floor 4 Chute or Ground Foyer"
@@ -1263,33 +1434,44 @@ export default function App() {
 
                 {/* Description */}
                 <div className="form-group">
-                  <label className="form-label">Description <span className="req">*</span></label>
+                  <label className="form-label" htmlFor="form-desc-input">
+                    Description <span className="req">*</span>
+                  </label>
                   <textarea
+                    id="form-desc-input"
                     className="form-textarea"
                     rows="3"
-                    placeholder="Describe the issue (e.g., bin overflowing with organic waste, bad odour spreading to corridor)"
+                    placeholder="Describe the issue (e.g. Bin overflowing with organic waste, bad odour spreading into common corridor)"
                     value={formDesc}
                     onChange={(e) => setFormDesc(e.target.value)}
                     required
                   />
-                  <div style={{ fontSize: '0.75rem', color: 'var(--color-neutral-500)', textAlign: 'right', marginTop: '0.25rem' }}>
-                    {formDesc.length} / 1000 characters (min. 10)
+                  <div style={{
+                    fontSize: '0.75rem',
+                    color: formDesc.length > 0 && formDesc.length < 10 ? 'var(--color-reopened)' : 'var(--color-neutral-500)',
+                    textAlign: 'right',
+                    marginTop: '0.25rem'
+                  }}>
+                    {formDesc.length} / 1000 characters {formDesc.length < 10 ? '(min. 10 required)' : '✓'}
                   </div>
                 </div>
 
                 {/* Photo Upload Dropzone */}
                 <div className="form-group">
-                  <label className="form-label">Attach Photo Proof (Optional, max 5MB)</label>
+                  <label className="form-label" htmlFor="form-photo-upload">
+                    Attach Incident Photo Proof (Optional, max 5MB)
+                  </label>
                   {!formPhotoPreview ? (
-                    <label className="file-upload-box">
-                      <div className="upload-icon">📷</div>
-                      <div style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--color-primary-800)' }}>
-                        Click to upload photo
+                    <label className="file-upload-box" htmlFor="form-photo-upload">
+                      <div className="upload-icon" aria-hidden="true">📷</div>
+                      <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--color-primary-800)' }}>
+                        Click to select or drag photo here
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--color-neutral-500)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-neutral-500)', marginTop: '0.2rem' }}>
                         Supports JPEG, PNG, WebP (up to 5MB)
                       </div>
                       <input
+                        id="form-photo-upload"
                         type="file"
                         accept="image/jpeg,image/png,image/webp"
                         style={{ display: 'none' }}
@@ -1298,7 +1480,7 @@ export default function App() {
                     </label>
                   ) : (
                     <div className="file-preview-wrapper">
-                      <img src={formPhotoPreview} alt="Preview" className="file-preview-img" />
+                      <img src={formPhotoPreview} alt="Preview of issue to lodge" className="file-preview-img" />
                       <button
                         type="button"
                         className="btn-remove-preview"
@@ -1306,6 +1488,8 @@ export default function App() {
                           setFormPhoto(null);
                           setFormPhotoPreview(null);
                         }}
+                        title="Remove attached photo"
+                        aria-label="Remove attached photo"
                       >
                         ✕
                       </button>
@@ -1313,8 +1497,13 @@ export default function App() {
                   )}
                 </div>
 
-                <button type="submit" className="btn-primary" disabled={submitting} style={{ width: '100%', marginTop: '0.5rem' }}>
-                  {submitting ? 'Submitting...' : '🚀 Submit Waste Incident Report'}
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={submitting}
+                  style={{ width: '100%', marginTop: '0.5rem', minHeight: '44px' }}
+                >
+                  {submitting ? 'Submitting Report...' : '🚀 Submit Waste Incident Report'}
                 </button>
               </form>
             </div>
@@ -1322,22 +1511,22 @@ export default function App() {
             {/* Sidebar Guidelines */}
             <div>
               <div className="clean-card" style={{ marginBottom: '1rem' }}>
-                <h3 style={{ fontSize: '1rem', color: 'var(--color-primary-800)', marginBottom: '0.75rem' }}>
-                  💡 Waste Segregation Rules
+                <h3 style={{ fontSize: '0.95rem', color: 'var(--color-primary-800)', marginBottom: '0.65rem' }}>
+                  💡 Waste Segregation Directives
                 </h3>
-                <ul style={{ fontSize: '0.85rem', color: 'var(--color-neutral-700)', paddingLeft: '1.25rem', lineHeight: '1.7' }}>
-                  <li><strong>Green Bin:</strong> Kitchen food scraps, tea leaves, fruit peels (Wet/Compost).</li>
-                  <li><strong>Blue Bin:</strong> Paper, flattened cardboards, clean plastic wraps (Dry/Recycle).</li>
-                  <li><strong>Hazardous:</strong> Do not throw batteries or tube lights into chutes.</li>
+                <ul style={{ fontSize: '0.825rem', color: 'var(--color-neutral-700)', paddingLeft: '1.25rem', lineHeight: '1.65' }}>
+                  <li><strong>Green Bin (Wet):</strong> Cooked food, vegetable scraps, tea leaves, fruit peels.</li>
+                  <li><strong>Blue Bin (Dry):</strong> Flattened cartons, clean plastic containers, dry paper.</li>
+                  <li><strong>Hazardous:</strong> Batteries, chemicals, and bulbs must not be thrown in chute.</li>
                 </ul>
               </div>
 
               <div className="clean-card">
-                <h3 style={{ fontSize: '1rem', color: 'var(--color-primary-800)', marginBottom: '0.5rem' }}>
-                  ⏱️ Resolution SLA
+                <h3 style={{ fontSize: '0.95rem', color: 'var(--color-primary-800)', marginBottom: '0.45rem' }}>
+                  ⏱️ Resolution SLA Commitment
                 </h3>
-                <p style={{ fontSize: '0.85rem', color: 'var(--color-neutral-600)', lineHeight: '1.6' }}>
-                  Standard waste incidents are reviewed within <strong>15 minutes</strong> and cleared within <strong>2 hours</strong>.
+                <p style={{ fontSize: '0.825rem', color: 'var(--color-neutral-600)', lineHeight: '1.55' }}>
+                  Sanitation issues are reviewed by housekeeping management within <strong>15 minutes</strong> and cleared within <strong>2 hours</strong>.
                 </p>
               </div>
             </div>
@@ -1345,21 +1534,77 @@ export default function App() {
         )}
 
         {/* TAB 2: RESIDENT MY COMPLAINTS LIST */}
-        {activeTab === 'my_complaints' && (
+        {activeTab === 'my_complaints' && currentUser?.role === 'resident' && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-              <h2 style={{ fontSize: '1.25rem', color: 'var(--color-primary-900)' }}>My Lodged Complaints</h2>
-              <button className="btn-primary" onClick={() => setActiveTab('report')}>
-                + New Complaint
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div>
+                <h2 style={{ fontSize: '1.35rem', color: 'var(--color-primary-900)' }}>My Lodged Complaints</h2>
+                <p style={{ color: 'var(--color-neutral-600)', fontSize: '0.85rem' }}>
+                  Track live status, housekeeping assignments, and photo resolution proofs.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => setActiveTab('report')}
+              >
+                + Lodge New Complaint
               </button>
+            </div>
+
+            {/* Resident Summary Cards */}
+            <div className="resident-summary-grid">
+              <div className="resident-summary-card">
+                <div className="resident-summary-icon" style={{ backgroundColor: 'var(--color-primary-100)', color: 'var(--color-primary-800)' }}>
+                  📋
+                </div>
+                <div>
+                  <div className="resident-summary-num">{residentSummary.total}</div>
+                  <div className="resident-summary-label">Total Lodged</div>
+                </div>
+              </div>
+
+              <div className="resident-summary-card">
+                <div className="resident-summary-icon" style={{ backgroundColor: 'var(--color-pending-bg)', color: 'var(--color-pending)' }}>
+                  ⏳
+                </div>
+                <div>
+                  <div className="resident-summary-num">{residentSummary.pending}</div>
+                  <div className="resident-summary-label">Pending Review</div>
+                </div>
+              </div>
+
+              <div className="resident-summary-card">
+                <div className="resident-summary-icon" style={{ backgroundColor: 'var(--color-progress-bg)', color: 'var(--color-progress)' }}>
+                  🧹
+                </div>
+                <div>
+                  <div className="resident-summary-num">{residentSummary.inProgress}</div>
+                  <div className="resident-summary-label">In Progress</div>
+                </div>
+              </div>
+
+              <div className="resident-summary-card">
+                <div className="resident-summary-icon" style={{ backgroundColor: 'var(--color-resolved-bg)', color: 'var(--color-resolved)' }}>
+                  ✅
+                </div>
+                <div>
+                  <div className="resident-summary-num">{residentSummary.resolved}</div>
+                  <div className="resident-summary-label">Cleaned & Resolved</div>
+                </div>
+              </div>
             </div>
 
             {complaints.length === 0 ? (
               <div className="clean-card empty-state">
-                <div className="empty-icon">🎉</div>
+                <div className="empty-icon" aria-hidden="true">🎉</div>
                 <div className="empty-title">No Active Complaints</div>
                 <div className="empty-desc">You have no active waste or sanitation tickets filed. All clean!</div>
-                <button className="btn-primary" onClick={() => setActiveTab('report')}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => setActiveTab('report')}
+                >
                   Report an Issue
                 </button>
               </div>
@@ -1368,28 +1613,32 @@ export default function App() {
                 {complaints.map((c) => (
                   <div key={c.id} className="clean-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                     <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
                         <span className="ref-pill">{c.reference_number}</span>
                         <span className={`badge badge-${c.status.toLowerCase()}`}>
                           {c.status}
                         </span>
                       </div>
-                      <div style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--color-neutral-900)', marginBottom: '0.25rem' }}>
-                        {c.category.replace('_', ' ')}
+                      <div style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--color-neutral-900)', marginBottom: '0.25rem' }}>
+                        {c.category.replace(/_/g, ' ')}
                       </div>
                       <div style={{ fontSize: '0.8rem', color: 'var(--color-primary-700)', fontWeight: '600', marginBottom: '0.5rem' }}>
                         📍 {c.wing} • {c.floor_location}
                       </div>
-                      <p style={{ fontSize: '0.85rem', color: 'var(--color-neutral-600)', marginBottom: '0.75rem', lineHeight: '1.5' }}>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--color-neutral-700)', marginBottom: '0.85rem', lineHeight: '1.5' }}>
                         {c.description}
                       </p>
                     </div>
 
                     <div style={{ borderTop: '1px solid var(--color-neutral-200)', paddingTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.75rem', color: 'var(--color-neutral-500)' }}>
-                        {new Date(c.created_at).toLocaleDateString()}
+                        Lodged: {new Date(c.created_at).toLocaleDateString()}
                       </span>
-                      <button className="btn-secondary" onClick={() => viewComplaintDetail(c.id)}>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => viewComplaintDetail(c.id)}
+                      >
                         View Details & Stepper →
                       </button>
                     </div>
@@ -1407,7 +1656,7 @@ export default function App() {
             {analytics && (
               <div className="kpi-grid">
                 <div className="kpi-card">
-                  <div className="kpi-icon-wrap" style={{ background: 'var(--color-primary-100)', color: 'var(--color-primary-800)' }}>
+                  <div className="kpi-icon-wrap" style={{ backgroundColor: 'var(--color-primary-100)', color: 'var(--color-primary-800)' }}>
                     📊
                   </div>
                   <div>
@@ -1417,7 +1666,7 @@ export default function App() {
                 </div>
 
                 <div className="kpi-card">
-                  <div className="kpi-icon-wrap" style={{ background: 'var(--color-pending-bg)', color: '#92400e' }}>
+                  <div className="kpi-icon-wrap" style={{ backgroundColor: 'var(--color-pending-bg)', color: 'var(--color-pending)' }}>
                     ⏳
                   </div>
                   <div>
@@ -1427,7 +1676,7 @@ export default function App() {
                 </div>
 
                 <div className="kpi-card">
-                  <div className="kpi-icon-wrap" style={{ background: 'var(--color-progress-bg)', color: '#1e40af' }}>
+                  <div className="kpi-icon-wrap" style={{ backgroundColor: 'var(--color-progress-bg)', color: 'var(--color-progress)' }}>
                     🧹
                   </div>
                   <div>
@@ -1437,7 +1686,7 @@ export default function App() {
                 </div>
 
                 <div className="kpi-card">
-                  <div className="kpi-icon-wrap" style={{ background: 'var(--color-resolved-bg)', color: '#065f46' }}>
+                  <div className="kpi-icon-wrap" style={{ backgroundColor: 'var(--color-resolved-bg)', color: 'var(--color-resolved)' }}>
                     ✅
                   </div>
                   <div>
@@ -1454,9 +1703,10 @@ export default function App() {
                 <input
                   type="text"
                   className="search-input"
-                  placeholder="🔍 Search Ref ID, location, details..."
+                  placeholder="🔍 Search Ref ID, location, resident, details..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  aria-label="Search complaints"
                 />
 
                 <select
@@ -1464,6 +1714,7 @@ export default function App() {
                   style={{ width: 'auto' }}
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
+                  aria-label="Filter complaints by status"
                 >
                   <option value="ALL">All Statuses</option>
                   <option value="PENDING">Pending</option>
@@ -1477,6 +1728,7 @@ export default function App() {
                   style={{ width: 'auto' }}
                   value={categoryFilter}
                   onChange={(e) => setCategoryFilter(e.target.value)}
+                  aria-label="Filter complaints by category"
                 >
                   <option value="ALL">All Categories</option>
                   {CATEGORIES.map((cat) => (
@@ -1489,6 +1741,7 @@ export default function App() {
                   style={{ width: 'auto' }}
                   value={wingFilter}
                   onChange={(e) => setWingFilter(e.target.value)}
+                  aria-label="Filter complaints by wing"
                 >
                   <option value="ALL">All Wings</option>
                   <option value="Wing A">Wing A</option>
@@ -1497,11 +1750,19 @@ export default function App() {
                 </select>
               </div>
 
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button className="btn-secondary" onClick={fetchManagerData}>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={fetchManagerData}
+                >
                   🔄 Refresh
                 </button>
-                <button className="btn-primary" onClick={() => setActiveTab('manage_staff')}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => setActiveTab('manage_staff')}
+                >
                   👥 Manage Staff
                 </button>
               </div>
@@ -1524,7 +1785,7 @@ export default function App() {
                 <tbody>
                   {complaints.length === 0 ? (
                     <tr>
-                      <td colSpan="7" style={{ textAlign: 'center', padding: '2rem' }}>
+                      <td colSpan="7" style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-neutral-500)' }}>
                         No complaints matching the selected filters.
                       </td>
                     </tr>
@@ -1535,7 +1796,7 @@ export default function App() {
                           <span className="ref-pill">{c.reference_number}</span>
                         </td>
                         <td>
-                          <strong>{c.category.replace('_', ' ')}</strong>
+                          <strong>{c.category.replace(/_/g, ' ')}</strong>
                         </td>
                         <td>
                           {c.wing} • {c.floor_location}
@@ -1554,24 +1815,26 @@ export default function App() {
                               👤 {c.assigned_staff_name}
                             </span>
                           ) : (
-                            <span style={{ color: 'var(--color-neutral-400)', fontStyle: 'italic' }}>
-                              Unassigned
+                            <span style={{ color: 'var(--color-pending)', fontWeight: 600, fontSize: '0.8rem' }}>
+                              ⚠️ Unassigned
                             </span>
                           )}
                         </td>
                         <td>
-                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
                             <button
+                              type="button"
                               className="btn-secondary"
-                              style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
+                              style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', minHeight: '32px' }}
                               onClick={() => viewComplaintDetail(c.id)}
                             >
                               Inspect
                             </button>
                             {c.status !== 'RESOLVED' && (
                               <button
+                                type="button"
                                 className="btn-primary"
-                                style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
+                                style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', minHeight: '32px' }}
                                 onClick={() => openAssignModal(c)}
                               >
                                 Assign
@@ -1597,10 +1860,11 @@ export default function App() {
                   Housekeeping Staff Management
                 </h2>
                 <p style={{ color: 'var(--color-neutral-600)', fontSize: '0.85rem' }}>
-                  Add, edit, monitor workloads, and manage employment status for society cleaning staff.
+                  Add, edit, monitor active workloads, and manage employment status for society cleaning staff.
                 </p>
               </div>
               <button
+                type="button"
                 className="btn-primary"
                 onClick={() => {
                   setAddStaffError(null);
@@ -1615,18 +1879,19 @@ export default function App() {
             {createdStaffCredential && (
               <div className="credential-banner">
                 <div className="credential-info">
-                  <div style={{ fontWeight: 700, color: 'var(--color-primary-900)', fontSize: '0.95rem' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--color-primary-900)', fontSize: '0.925rem' }}>
                     🎉 New Staff Member Registered: <strong>{createdStaffCredential.fullName}</strong>
                   </div>
-                  <div style={{ fontSize: '0.85rem', color: 'var(--color-neutral-700)' }}>
+                  <div style={{ fontSize: '0.825rem', color: 'var(--color-neutral-700)' }}>
                     Login Email: <code>{createdStaffCredential.email}</code> • Temporary Password:{' '}
                     <span className="temp-password-box">{createdStaffCredential.tempPassword}</span>
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--color-neutral-500)', marginTop: '0.2rem' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--color-neutral-500)', marginTop: '0.15rem' }}>
                     Please share these credentials with the employee. This temporary password will not be shown again.
                   </div>
                 </div>
                 <button
+                  type="button"
                   className="btn-secondary"
                   onClick={() => {
                     navigator.clipboard.writeText(
@@ -1649,6 +1914,7 @@ export default function App() {
                   placeholder="🔍 Search staff by name, email, phone, ID..."
                   value={staffSearchQuery}
                   onChange={(e) => setStaffSearchQuery(e.target.value)}
+                  aria-label="Search staff members"
                 />
 
                 <select
@@ -1656,6 +1922,7 @@ export default function App() {
                   style={{ width: 'auto' }}
                   value={staffStatusFilter}
                   onChange={(e) => setStaffStatusFilter(e.target.value)}
+                  aria-label="Filter staff by status"
                 >
                   <option value="all">All Employment Statuses</option>
                   <option value="active">Active Staff Only</option>
@@ -1663,7 +1930,11 @@ export default function App() {
                 </select>
               </div>
 
-              <button className="btn-secondary" onClick={fetchStaffDirectory}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={fetchStaffDirectory}
+              >
                 🔄 Refresh Directory
               </button>
             </div>
@@ -1687,10 +1958,11 @@ export default function App() {
                     <tr>
                       <td colSpan="7">
                         <div className="empty-state">
-                          <div className="empty-icon">🧹</div>
+                          <div className="empty-icon" aria-hidden="true">🧹</div>
                           <div className="empty-title">No Staff Found</div>
                           <div className="empty-desc">No housekeeping staff members match your query.</div>
                           <button
+                            type="button"
                             className="btn-primary"
                             onClick={() => {
                               setAddStaffError(null);
@@ -1707,7 +1979,9 @@ export default function App() {
                       <tr key={s.id}>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center' }}>
-                            <div className="staff-table-avatar">{s.full_name.charAt(0)}</div>
+                            <div className="staff-table-avatar" aria-hidden="true">
+                              {s.full_name.charAt(0)}
+                            </div>
                             <div>
                               <div style={{ fontWeight: 700, color: 'var(--color-neutral-900)' }}>
                                 {s.full_name}
@@ -1727,7 +2001,7 @@ export default function App() {
                         </td>
                         <td>
                           {s.phone ? (
-                            <span style={{ fontSize: '0.85rem' }}>📞 {s.phone}</span>
+                            <span style={{ fontSize: '0.825rem' }}>📞 {s.phone}</span>
                           ) : (
                             <span style={{ color: 'var(--color-neutral-400)', fontSize: '0.8rem' }}>—</span>
                           )}
@@ -1754,17 +2028,19 @@ export default function App() {
                           </span>
                         </td>
                         <td>
-                          <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <div style={{ display: 'flex', gap: '0.4rem' }}>
                             <button
+                              type="button"
                               className="btn-secondary"
-                              style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
+                              style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', minHeight: '32px' }}
                               onClick={() => openEditStaffModal(s)}
                             >
                               ✏️ Edit
                             </button>
                             <button
+                              type="button"
                               className={s.is_active ? 'btn-danger' : 'btn-primary'}
-                              style={{ padding: '0.35rem 0.65rem', fontSize: '0.75rem' }}
+                              style={{ padding: '0.3rem 0.6rem', fontSize: '0.75rem', minHeight: '32px' }}
                               onClick={() => handleToggleStaffStatus(s)}
                             >
                               {s.is_active ? 'Deactivate' : 'Activate'}
@@ -1784,43 +2060,49 @@ export default function App() {
         {activeTab === 'staff_queue' && currentUser?.role === 'staff' && (
           <div>
             <div style={{ marginBottom: '1.25rem' }}>
-              <h2 style={{ fontSize: '1.25rem', color: 'var(--color-primary-900)' }}>
+              <h2 style={{ fontSize: '1.35rem', color: 'var(--color-primary-900)' }}>
                 Active Tasks Assigned to You
               </h2>
               <p style={{ color: 'var(--color-neutral-600)', fontSize: '0.85rem' }}>
-                Complete cleanups at the designated locations and upload photo evidence.
+                Complete cleanups at the designated locations and upload after-cleanup photo evidence.
               </p>
             </div>
 
             {complaints.length === 0 ? (
               <div className="clean-card empty-state">
-                <div className="empty-icon">✨</div>
+                <div className="empty-icon" aria-hidden="true">✨</div>
                 <div className="empty-title">All Caught Up!</div>
-                <div className="empty-desc">No tasks currently assigned to your queue.</div>
+                <div className="empty-desc">No tasks currently assigned to your queue. Enjoy your shift!</div>
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
                 {complaints.map((c) => (
-                  <div key={c.id} className="clean-card" style={{ borderLeft: '4px solid var(--color-primary-600)' }}>
+                  <div key={c.id} className="clean-card" style={{ borderLeft: '4px solid var(--color-primary-700)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                       <span className="ref-pill">{c.reference_number}</span>
                       <span className="badge badge-in_progress">IN PROGRESS</span>
                     </div>
 
-                    <h3 style={{ fontSize: '1.1rem', marginBottom: '0.25rem' }}>
-                      {c.category.replace('_', ' ')}
+                    <h3 style={{ fontSize: '1.05rem', marginBottom: '0.25rem', color: 'var(--color-neutral-900)' }}>
+                      {c.category.replace(/_/g, ' ')}
                     </h3>
                     <div style={{ fontSize: '0.85rem', color: 'var(--color-primary-800)', fontWeight: '700', marginBottom: '0.5rem' }}>
                       📍 {c.wing} • {c.floor_location}
                     </div>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--color-neutral-700)', marginBottom: '1rem', background: 'var(--color-neutral-50)', padding: '0.5rem', borderRadius: 'var(--radius-sm)' }}>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--color-neutral-700)', marginBottom: '1rem', backgroundColor: 'var(--color-neutral-50)', padding: '0.65rem', borderRadius: 'var(--radius-md)' }}>
                       "{c.description}"
                     </p>
 
                     <button
+                      type="button"
                       className="btn-primary"
-                      style={{ width: '100%' }}
-                      onClick={() => setResolveModalComplaint(c)}
+                      style={{ width: '100%', minHeight: '42px' }}
+                      onClick={() => {
+                        setResolveModalComplaint(c);
+                        setResolveNotes('');
+                        setResolvePhoto(null);
+                        setResolvePhotoPreview(null);
+                      }}
                     >
                       ✅ Mark Cleaned & Resolved
                     </button>
@@ -1844,7 +2126,11 @@ export default function App() {
                 </p>
               </div>
               {currentUser?.role === 'manager' && (
-                <button className="btn-primary" onClick={openAddScheduleModal}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={openAddScheduleModal}
+                >
                   + Add Schedule Slot
                 </button>
               )}
@@ -1852,47 +2138,66 @@ export default function App() {
 
             {schedules.length === 0 ? (
               <div className="clean-card empty-state">
-                <div className="empty-icon">📅</div>
+                <div className="empty-icon" aria-hidden="true">📅</div>
                 <div className="empty-title">No Timetable Slots Defined</div>
                 <div className="empty-desc">There are currently no active collection schedules for this society.</div>
                 {currentUser?.role === 'manager' && (
-                  <button className="btn-primary" onClick={openAddScheduleModal} style={{ marginTop: '1rem' }}>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={openAddScheduleModal}
+                    style={{ marginTop: '0.75rem' }}
+                  >
                     + Add First Schedule Slot
                   </button>
                 )}
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.25rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.15rem' }}>
                 {schedules.map((s) => (
-                  <div key={s.id} className="clean-card" style={{ borderTop: `4px solid ${s.waste_category === 'WET_ORGANIC' ? '#10b981' : s.waste_category === 'DRY_RECYCLABLE' ? '#3b82f6' : '#f59e0b'}` }}>
+                  <div
+                    key={s.id}
+                    className="clean-card"
+                    style={{
+                      borderTop: `4px solid ${
+                        s.waste_category === 'WET_ORGANIC'
+                          ? '#059669'
+                          : s.waste_category === 'DRY_RECYCLABLE'
+                          ? '#2563eb'
+                          : s.waste_category === 'E_WASTE_HAZARDOUS'
+                          ? '#dc2626'
+                          : '#d97706'
+                      }`
+                    }}
+                  >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <span style={{ fontSize: '1.5rem' }}>
+                        <span style={{ fontSize: '1.35rem' }} aria-hidden="true">
                           {s.waste_category === 'WET_ORGANIC' ? '🥬' : s.waste_category === 'DRY_RECYCLABLE' ? '📦' : s.waste_category === 'GARDEN_PRUNINGS' ? '🌿' : '🔋'}
                         </span>
-                        <h3 style={{ fontSize: '1.1rem', color: 'var(--color-neutral-900)' }}>
+                        <h3 style={{ fontSize: '1.05rem', color: 'var(--color-neutral-900)' }}>
                           {s.waste_category.replace(/_/g, ' ')}
                         </h3>
                       </div>
                       {s.disposal_location && (
-                        <span style={{ fontSize: '0.75rem', color: 'var(--color-primary-800)', background: 'var(--color-primary-50)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-sm)', fontWeight: 600 }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--color-primary-800)', backgroundColor: 'var(--color-primary-50)', border: '1px solid var(--color-primary-200)', padding: '0.2rem 0.5rem', borderRadius: 'var(--radius-xs)', fontWeight: 600 }}>
                           📍 {s.disposal_location}
                         </span>
                       )}
                     </div>
 
-                    <div style={{ margin: '0.75rem 0', padding: '0.5rem 0.75rem', background: 'var(--color-neutral-50)', borderRadius: 'var(--radius-md)' }}>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--color-neutral-500)' }}>Collection Days</div>
-                      <div style={{ fontWeight: 700, color: 'var(--color-primary-800)', fontSize: '0.9rem' }}>
+                    <div style={{ margin: '0.75rem 0', padding: '0.65rem 0.75rem', backgroundColor: 'var(--color-neutral-50)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-neutral-200)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-neutral-500)' }}>Collection Days</div>
+                      <div style={{ fontWeight: 700, color: 'var(--color-primary-800)', fontSize: '0.875rem' }}>
                         {s.days_of_week.join(' • ')}
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--color-neutral-500)', marginTop: '0.25rem' }}>Time Window</div>
-                      <div style={{ fontWeight: 700, color: 'var(--color-neutral-800)', fontSize: '0.9rem' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-neutral-500)', marginTop: '0.35rem' }}>Time Window</div>
+                      <div style={{ fontWeight: 700, color: 'var(--color-neutral-800)', fontSize: '0.875rem' }}>
                         ⏰ {s.start_time} - {s.end_time}
                       </div>
                     </div>
 
-                    <p style={{ fontSize: '0.85rem', color: 'var(--color-neutral-600)', lineHeight: '1.5' }}>
+                    <p style={{ fontSize: '0.825rem', color: 'var(--color-neutral-600)', lineHeight: '1.5' }}>
                       {s.instructions || 'No specific disposal instructions provided.'}
                     </p>
 
@@ -1900,15 +2205,17 @@ export default function App() {
                     {currentUser?.role === 'manager' && (
                       <div className="schedule-card-actions">
                         <button
+                          type="button"
                           className="btn-secondary"
-                          style={{ flex: 1, padding: '0.45rem 0.75rem', fontSize: '0.8rem' }}
+                          style={{ flex: 1, padding: '0.35rem 0.65rem', fontSize: '0.8rem', minHeight: '34px' }}
                           onClick={() => openEditScheduleModal(s)}
                         >
                           ✏️ Edit Schedule
                         </button>
                         <button
+                          type="button"
                           className="btn-danger"
-                          style={{ padding: '0.45rem 0.75rem', fontSize: '0.8rem' }}
+                          style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', minHeight: '34px' }}
                           title="Delete Schedule Slot"
                           onClick={() => handleDeleteSchedule(s)}
                         >
@@ -1926,7 +2233,7 @@ export default function App() {
         {/* MODAL: COMPLAINT DETAIL & STEPPER */}
         {selectedComplaint && (
           <div className="modal-overlay" onClick={() => setSelectedComplaint(null)}>
-            <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="modal-detail-title">
               <div className="modal-header">
                 <div>
                   <span className="ref-pill">{selectedComplaint.reference_number}</span>
@@ -1934,12 +2241,20 @@ export default function App() {
                     {selectedComplaint.status}
                   </span>
                 </div>
-                <button className="modal-close" onClick={() => setSelectedComplaint(null)}>✕</button>
+                <button
+                  type="button"
+                  className="modal-close"
+                  onClick={() => setSelectedComplaint(null)}
+                  title="Close modal"
+                  aria-label="Close dialog"
+                >
+                  ✕
+                </button>
               </div>
 
               {/* Status Stepper */}
-              <div className="stepper-wrap">
-                <div className={`stepper-step completed`}>
+              <div className="stepper-wrap" aria-label="Progress Stepper">
+                <div className="stepper-step completed">
                   <div className="step-circle">✓</div>
                   <div className="step-title">Reported</div>
                 </div>
@@ -1960,13 +2275,13 @@ export default function App() {
               </div>
 
               <div style={{ marginBottom: '1rem' }}>
-                <h3 style={{ fontSize: '1.2rem', marginBottom: '0.25rem' }}>
-                  {selectedComplaint.category.replace('_', ' ')}
+                <h3 id="modal-detail-title" style={{ fontSize: '1.15rem', marginBottom: '0.25rem', color: 'var(--color-neutral-900)' }}>
+                  {selectedComplaint.category.replace(/_/g, ' ')}
                 </h3>
                 <div style={{ color: 'var(--color-primary-800)', fontWeight: 600, fontSize: '0.85rem' }}>
                   📍 {selectedComplaint.wing} • {selectedComplaint.floor_location}
                 </div>
-                <p style={{ marginTop: '0.5rem', fontSize: '0.9rem', color: 'var(--color-neutral-700)', background: 'var(--color-neutral-50)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>
+                <p style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--color-neutral-700)', backgroundColor: 'var(--color-neutral-50)', padding: '0.75rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-neutral-200)', lineHeight: '1.5' }}>
                   {selectedComplaint.description}
                 </p>
               </div>
@@ -1975,22 +2290,22 @@ export default function App() {
               <div style={{ display: 'grid', gridTemplateColumns: selectedComplaint.resolution_photo_url ? '1fr 1fr' : '1fr', gap: '0.75rem', marginBottom: '1rem' }}>
                 {selectedComplaint.photo_url && (
                   <div>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-neutral-600)', marginBottom: '0.25rem' }}>Before (Reported Incident)</div>
-                    <img src={resolveAssetUrl(selectedComplaint.photo_url)} alt="Before" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
+                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-neutral-600)', marginBottom: '0.25rem' }}>Reported Incident Photo</div>
+                    <img src={resolveAssetUrl(selectedComplaint.photo_url)} alt="Reported Incident" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-neutral-200)' }} />
                   </div>
                 )}
                 {selectedComplaint.resolution_photo_url && (
                   <div>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-resolved)', marginBottom: '0.25rem' }}>After (Resolution Proof)</div>
-                    <img src={resolveAssetUrl(selectedComplaint.resolution_photo_url)} alt="After" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: 'var(--radius-md)' }} />
+                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-resolved)', marginBottom: '0.25rem' }}>Resolved Cleanup Proof</div>
+                    <img src={resolveAssetUrl(selectedComplaint.resolution_photo_url)} alt="Resolved Cleanup Proof" style={{ width: '100%', maxHeight: '180px', objectFit: 'cover', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-resolved-border)' }} />
                   </div>
                 )}
               </div>
 
               {selectedComplaint.resolution_notes && (
-                <div style={{ background: 'var(--color-resolved-bg)', padding: '0.75rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem' }}>
-                  <div style={{ fontWeight: 700, color: '#065f46', fontSize: '0.85rem' }}>✅ Resolution Note:</div>
-                  <div style={{ color: '#065f46', fontSize: '0.85rem' }}>{selectedComplaint.resolution_notes}</div>
+                <div style={{ backgroundColor: 'var(--color-resolved-bg)', border: '1px solid var(--color-resolved-border)', padding: '0.75rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem' }}>
+                  <div style={{ fontWeight: 700, color: 'var(--color-resolved)', fontSize: '0.85rem' }}>✅ Resolution Note:</div>
+                  <div style={{ color: 'var(--color-resolved)', fontSize: '0.85rem', marginTop: '0.2rem' }}>{selectedComplaint.resolution_notes}</div>
                 </div>
               )}
 
@@ -2009,13 +2324,18 @@ export default function App() {
               {currentUser?.role === 'resident' && selectedComplaint.status === 'RESOLVED' && (
                 <div style={{ marginTop: '1.25rem', borderTop: '1px solid var(--color-neutral-200)', paddingTop: '1rem' }}>
                   {!showReopenInput ? (
-                    <button className="btn-danger" onClick={() => setShowReopenInput(true)}>
+                    <button
+                      type="button"
+                      className="btn-danger"
+                      onClick={() => setShowReopenInput(true)}
+                    >
                       ⚠️ Issue Not Cleaned? Reopen Complaint
                     </button>
                   ) : (
                     <div>
-                      <label className="form-label">Reason for reopening:</label>
+                      <label className="form-label" htmlFor="reopen-reason-input">Reason for reopening:</label>
                       <input
+                        id="reopen-reason-input"
                         type="text"
                         className="form-input"
                         placeholder="e.g. Stains remain, odour not eliminated"
@@ -2024,10 +2344,18 @@ export default function App() {
                         style={{ marginBottom: '0.5rem' }}
                       />
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button className="btn-danger" onClick={() => handleReopenSubmit(selectedComplaint.id)}>
+                        <button
+                          type="button"
+                          className="btn-danger"
+                          onClick={() => handleReopenSubmit(selectedComplaint.id)}
+                        >
                           Confirm Reopen
                         </button>
-                        <button className="btn-secondary" onClick={() => setShowReopenInput(false)}>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => setShowReopenInput(false)}
+                        >
                           Cancel
                         </button>
                       </div>
@@ -2042,10 +2370,18 @@ export default function App() {
         {/* MODAL: ASSIGN STAFF (MANAGER) */}
         {assignModalComplaint && (
           <div className="modal-overlay" onClick={() => setAssignModalComplaint(null)}>
-            <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="modal-assign-title">
               <div className="modal-header">
-                <h3>Assign Task to Housekeeping Staff</h3>
-                <button className="modal-close" onClick={() => setAssignModalComplaint(null)}>✕</button>
+                <h3 id="modal-assign-title">Assign Task to Housekeeping Staff</h3>
+                <button
+                  type="button"
+                  className="modal-close"
+                  onClick={() => setAssignModalComplaint(null)}
+                  title="Close modal"
+                  aria-label="Close dialog"
+                >
+                  ✕
+                </button>
               </div>
 
               <p style={{ fontSize: '0.85rem', color: 'var(--color-neutral-600)', marginBottom: '1rem' }}>
@@ -2053,14 +2389,17 @@ export default function App() {
               </p>
 
               {staffList.length === 0 ? (
-                <div style={{ background: '#fef3c7', border: '1px solid #fde68a', color: '#92400e', padding: '1rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                <div style={{ backgroundColor: 'var(--color-pending-bg)', border: '1px solid var(--color-pending-border)', color: 'var(--color-pending)', padding: '0.85rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem', fontSize: '0.85rem' }}>
                   ⚠️ <strong>No active housekeeping staff available.</strong> Please activate existing staff or add a new team member in <strong>Manage Staff</strong> before dispatching this complaint.
                 </div>
               ) : (
                 <>
                   <div className="form-group">
-                    <label className="form-label">Select Active Staff Member <span className="req">*</span></label>
+                    <label className="form-label" htmlFor="assign-staff-select">
+                      Select Active Staff Member <span className="req">*</span>
+                    </label>
                     <select
+                      id="assign-staff-select"
                       className="form-select"
                       value={selectedStaffId}
                       onChange={(e) => setSelectedStaffId(e.target.value)}
@@ -2074,8 +2413,11 @@ export default function App() {
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Special Directives / Instructions (Optional)</label>
+                    <label className="form-label" htmlFor="assign-instructions-input">
+                      Special Directives / Instructions (Optional)
+                    </label>
                     <input
+                      id="assign-instructions-input"
                       type="text"
                       className="form-input"
                       placeholder="e.g. Disinfect area and place fresh bin liner"
@@ -2087,10 +2429,15 @@ export default function App() {
               )}
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.25rem' }}>
-                <button className="btn-secondary" onClick={() => setAssignModalComplaint(null)}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setAssignModalComplaint(null)}
+                >
                   Cancel
                 </button>
                 <button
+                  type="button"
                   className="btn-primary"
                   disabled={staffList.length === 0 || assigningLoading}
                   onClick={handleAssignSubmit}
@@ -2105,22 +2452,33 @@ export default function App() {
         {/* MODAL: ADD NEW STAFF (MANAGER) */}
         {addStaffModalOpen && (
           <div className="modal-overlay" onClick={() => setAddStaffModalOpen(false)}>
-            <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="modal-add-staff-title">
               <div className="modal-header">
-                <h3>Add New Housekeeping Staff</h3>
-                <button className="modal-close" onClick={() => setAddStaffModalOpen(false)}>✕</button>
+                <h3 id="modal-add-staff-title">Add New Housekeeping Staff</h3>
+                <button
+                  type="button"
+                  className="modal-close"
+                  onClick={() => setAddStaffModalOpen(false)}
+                  title="Close modal"
+                  aria-label="Close dialog"
+                >
+                  ✕
+                </button>
               </div>
 
               {addStaffError && (
-                <div style={{ background: '#fee2e2', border: '1px solid #fecaca', color: '#991b1b', padding: '0.75rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                <div style={{ backgroundColor: 'var(--color-reopened-bg)', border: '1px solid var(--color-reopened-border)', color: 'var(--color-reopened)', padding: '0.75rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem', fontSize: '0.85rem' }}>
                   ⚠️ {addStaffError}
                 </div>
               )}
 
               <form onSubmit={handleCreateStaffSubmit}>
                 <div className="form-group">
-                  <label className="form-label">Full Name <span className="req">*</span></label>
+                  <label className="form-label" htmlFor="add-staff-fullname">
+                    Full Name <span className="req">*</span>
+                  </label>
                   <input
+                    id="add-staff-fullname"
                     type="text"
                     className="form-input"
                     placeholder="e.g. Suresh Patil"
@@ -2131,8 +2489,11 @@ export default function App() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Email Address <span className="req">*</span></label>
+                  <label className="form-label" htmlFor="add-staff-email">
+                    Email Address <span className="req">*</span>
+                  </label>
                   <input
+                    id="add-staff-email"
                     type="email"
                     className="form-input"
                     placeholder="e.g. suresh.patil@greenvista.org"
@@ -2144,8 +2505,11 @@ export default function App() {
 
                 <div className="form-row-2">
                   <div className="form-group">
-                    <label className="form-label">Phone Number (Optional)</label>
+                    <label className="form-label" htmlFor="add-staff-phone">
+                      Phone Number (Optional)
+                    </label>
                     <input
+                      id="add-staff-phone"
                       type="tel"
                       className="form-input"
                       placeholder="e.g. +91 98765 43210"
@@ -2154,8 +2518,11 @@ export default function App() {
                     />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Employee ID (Optional)</label>
+                    <label className="form-label" htmlFor="add-staff-empid">
+                      Employee ID (Optional)
+                    </label>
                     <input
+                      id="add-staff-empid"
                       type="text"
                       className="form-input"
                       placeholder="e.g. HK-012"
@@ -2166,8 +2533,11 @@ export default function App() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Initial Password (Optional)</label>
+                  <label className="form-label" htmlFor="add-staff-password">
+                    Initial Password (Optional)
+                  </label>
                   <input
+                    id="add-staff-password"
                     type="text"
                     className="form-input"
                     placeholder="Leave blank to auto-generate a secure temporary password"
@@ -2180,10 +2550,18 @@ export default function App() {
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.25rem' }}>
-                  <button type="button" className="btn-secondary" onClick={() => setAddStaffModalOpen(false)}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setAddStaffModalOpen(false)}
+                  >
                     Cancel
                   </button>
-                  <button type="submit" className="btn-primary" disabled={addStaffLoading}>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={addStaffLoading}
+                  >
                     {addStaffLoading ? 'Creating...' : 'Create Staff Member'}
                   </button>
                 </div>
@@ -2195,22 +2573,33 @@ export default function App() {
         {/* MODAL: EDIT STAFF (MANAGER) */}
         {editStaffModalOpen && (
           <div className="modal-overlay" onClick={() => setEditStaffModalOpen(false)}>
-            <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="modal-edit-staff-title">
               <div className="modal-header">
-                <h3>Edit Staff Member Details</h3>
-                <button className="modal-close" onClick={() => setEditStaffModalOpen(false)}>✕</button>
+                <h3 id="modal-edit-staff-title">Edit Staff Member Details</h3>
+                <button
+                  type="button"
+                  className="modal-close"
+                  onClick={() => setEditStaffModalOpen(false)}
+                  title="Close modal"
+                  aria-label="Close dialog"
+                >
+                  ✕
+                </button>
               </div>
 
               {editStaffError && (
-                <div style={{ background: '#fee2e2', border: '1px solid #fecaca', color: '#991b1b', padding: '0.75rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                <div style={{ backgroundColor: 'var(--color-reopened-bg)', border: '1px solid var(--color-reopened-border)', color: 'var(--color-reopened)', padding: '0.75rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem', fontSize: '0.85rem' }}>
                   ⚠️ {editStaffError}
                 </div>
               )}
 
               <form onSubmit={handleUpdateStaffSubmit}>
                 <div className="form-group">
-                  <label className="form-label">Full Name <span className="req">*</span></label>
+                  <label className="form-label" htmlFor="edit-staff-fullname">
+                    Full Name <span className="req">*</span>
+                  </label>
                   <input
+                    id="edit-staff-fullname"
                     type="text"
                     className="form-input"
                     value={editStaffForm.fullName}
@@ -2220,8 +2609,11 @@ export default function App() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Email Address <span className="req">*</span></label>
+                  <label className="form-label" htmlFor="edit-staff-email">
+                    Email Address <span className="req">*</span>
+                  </label>
                   <input
+                    id="edit-staff-email"
                     type="email"
                     className="form-input"
                     value={editStaffForm.email}
@@ -2232,8 +2624,9 @@ export default function App() {
 
                 <div className="form-row-2">
                   <div className="form-group">
-                    <label className="form-label">Phone Number</label>
+                    <label className="form-label" htmlFor="edit-staff-phone">Phone Number</label>
                     <input
+                      id="edit-staff-phone"
                       type="tel"
                       className="form-input"
                       value={editStaffForm.phone}
@@ -2241,8 +2634,9 @@ export default function App() {
                     />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">Employee ID</label>
+                    <label className="form-label" htmlFor="edit-staff-empid">Employee ID</label>
                     <input
+                      id="edit-staff-empid"
                       type="text"
                       className="form-input"
                       value={editStaffForm.employeeId}
@@ -2252,10 +2646,18 @@ export default function App() {
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.25rem' }}>
-                  <button type="button" className="btn-secondary" onClick={() => setEditStaffModalOpen(false)}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setEditStaffModalOpen(false)}
+                  >
                     Cancel
                   </button>
-                  <button type="submit" className="btn-primary" disabled={editStaffLoading}>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={editStaffLoading}
+                  >
                     {editStaffLoading ? 'Saving...' : 'Save Changes'}
                   </button>
                 </div>
@@ -2267,39 +2669,93 @@ export default function App() {
         {/* MODAL: RESOLVE WORK (STAFF) */}
         {resolveModalComplaint && (
           <div className="modal-overlay" onClick={() => setResolveModalComplaint(null)}>
-            <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="modal-resolve-title">
               <div className="modal-header">
-                <h3>Complete & Verify Cleanup</h3>
-                <button className="modal-close" onClick={() => setResolveModalComplaint(null)}>✕</button>
+                <h3 id="modal-resolve-title">Complete & Verify Cleanup</h3>
+                <button
+                  type="button"
+                  className="modal-close"
+                  onClick={() => setResolveModalComplaint(null)}
+                  title="Close modal"
+                  aria-label="Close dialog"
+                >
+                  ✕
+                </button>
               </div>
 
+              <p style={{ fontSize: '0.85rem', color: 'var(--color-neutral-600)', marginBottom: '1rem' }}>
+                Ref: <strong>{resolveModalComplaint.reference_number}</strong> ({resolveModalComplaint.wing} • {resolveModalComplaint.floor_location})
+              </p>
+
               <div className="form-group">
-                <label className="form-label">Completion Notes</label>
+                <label className="form-label" htmlFor="resolve-notes-input">
+                  Completion Notes
+                </label>
                 <textarea
+                  id="resolve-notes-input"
                   className="form-textarea"
                   rows="3"
-                  placeholder="e.g. Garbage chute cleared, floor bleached, fresh liner placed."
+                  placeholder="e.g. Garbage chute cleared, floor washed and bleached, fresh bin liner placed."
                   value={resolveNotes}
                   onChange={(e) => setResolveNotes(e.target.value)}
                 />
               </div>
 
               <div className="form-group">
-                <label className="form-label">Attach After-Cleanup Photo (Optional)</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="form-input"
-                  onChange={(e) => setResolvePhoto(e.target.files[0])}
-                />
+                <label className="form-label" htmlFor="resolve-photo-input">
+                  Attach After-Cleanup Photo Proof (Optional, max 5MB)
+                </label>
+                {!resolvePhotoPreview ? (
+                  <label className="file-upload-box" htmlFor="resolve-photo-input">
+                    <div className="upload-icon" aria-hidden="true">📷</div>
+                    <div style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--color-primary-800)' }}>
+                      Click to upload resolution evidence photo
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--color-neutral-500)', marginTop: '0.2rem' }}>
+                      Supports JPEG, PNG, WebP (up to 5MB)
+                    </div>
+                    <input
+                      id="resolve-photo-input"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      style={{ display: 'none' }}
+                      onChange={handleResolvePhotoSelect}
+                    />
+                  </label>
+                ) : (
+                  <div className="file-preview-wrapper">
+                    <img src={resolvePhotoPreview} alt="Cleanup proof preview" className="file-preview-img" />
+                    <button
+                      type="button"
+                      className="btn-remove-preview"
+                      onClick={() => {
+                        setResolvePhoto(null);
+                        setResolvePhotoPreview(null);
+                      }}
+                      title="Remove attached photo"
+                      aria-label="Remove attached photo"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                <button className="btn-secondary" onClick={() => setResolveModalComplaint(null)}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.25rem' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setResolveModalComplaint(null)}
+                >
                   Cancel
                 </button>
-                <button className="btn-primary" onClick={handleResolveSubmit}>
-                  ✅ Mark as Resolved
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={resolvingLoading}
+                  onClick={handleResolveSubmit}
+                >
+                  {resolvingLoading ? 'Marking...' : '✅ Mark as Resolved'}
                 </button>
               </div>
             </div>
@@ -2309,22 +2765,35 @@ export default function App() {
         {/* MODAL: EDIT / ADD COLLECTION SCHEDULE (MANAGER) */}
         {scheduleModalOpen && (
           <div className="modal-overlay" onClick={() => setScheduleModalOpen(false)}>
-            <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="modal-schedule-title">
               <div className="modal-header">
-                <h3>{scheduleModalMode === 'create' ? 'Add Collection Schedule Slot' : 'Edit Collection Schedule'}</h3>
-                <button className="modal-close" onClick={() => setScheduleModalOpen(false)}>✕</button>
+                <h3 id="modal-schedule-title">
+                  {scheduleModalMode === 'create' ? 'Add Collection Schedule Slot' : 'Edit Collection Schedule'}
+                </h3>
+                <button
+                  type="button"
+                  className="modal-close"
+                  onClick={() => setScheduleModalOpen(false)}
+                  title="Close modal"
+                  aria-label="Close dialog"
+                >
+                  ✕
+                </button>
               </div>
 
               {scheduleError && (
-                <div style={{ background: '#fee2e2', border: '1px solid #fecaca', color: '#991b1b', padding: '0.75rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                <div style={{ backgroundColor: 'var(--color-reopened-bg)', border: '1px solid var(--color-reopened-border)', color: 'var(--color-reopened)', padding: '0.75rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem', fontSize: '0.85rem' }}>
                   ⚠️ {scheduleError}
                 </div>
               )}
 
               <form onSubmit={handleSaveScheduleSubmit}>
                 <div className="form-group">
-                  <label className="form-label">Waste Category <span className="req">*</span></label>
+                  <label className="form-label" htmlFor="schedule-category-select">
+                    Waste Category <span className="req">*</span>
+                  </label>
                   <select
+                    id="schedule-category-select"
                     className="form-select"
                     value={scheduleForm.wasteCategory}
                     onChange={(e) => setScheduleForm({ ...scheduleForm, wasteCategory: e.target.value })}
@@ -2339,8 +2808,10 @@ export default function App() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Collection Days <span className="req">*</span></label>
-                  <div className="day-selector-grid">
+                  <label className="form-label" id="schedule-days-label">
+                    Collection Days <span className="req">*</span>
+                  </label>
+                  <div className="day-selector-grid" role="group" aria-labelledby="schedule-days-label">
                     {['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'].map((day) => {
                       const isSel = scheduleForm.daysOfWeek.includes(day);
                       return (
@@ -2349,6 +2820,7 @@ export default function App() {
                           type="button"
                           className={`day-pill-btn ${isSel ? 'selected' : ''}`}
                           onClick={() => handleToggleScheduleDay(day)}
+                          aria-pressed={isSel}
                         >
                           {day} {isSel ? '✓' : ''}
                         </button>
@@ -2359,8 +2831,11 @@ export default function App() {
 
                 <div className="form-row-2">
                   <div className="form-group">
-                    <label className="form-label">Start Time (24h) <span className="req">*</span></label>
+                    <label className="form-label" htmlFor="schedule-start-time">
+                      Start Time (24h) <span className="req">*</span>
+                    </label>
                     <input
+                      id="schedule-start-time"
                       type="time"
                       className="form-input"
                       value={scheduleForm.startTime}
@@ -2369,8 +2844,11 @@ export default function App() {
                     />
                   </div>
                   <div className="form-group">
-                    <label className="form-label">End Time (24h) <span className="req">*</span></label>
+                    <label className="form-label" htmlFor="schedule-end-time">
+                      End Time (24h) <span className="req">*</span>
+                    </label>
                     <input
+                      id="schedule-end-time"
                       type="time"
                       className="form-input"
                       value={scheduleForm.endTime}
@@ -2381,8 +2859,11 @@ export default function App() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Disposal / Pickup Location (Optional)</label>
+                  <label className="form-label" htmlFor="schedule-location-input">
+                    Disposal / Pickup Location (Optional)
+                  </label>
                   <input
+                    id="schedule-location-input"
                     type="text"
                     className="form-input"
                     placeholder="e.g. Floor Chutes, Clubhouse Drop Point, Ground Refuse Room"
@@ -2392,8 +2873,11 @@ export default function App() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Resident Directives & Instructions</label>
+                  <label className="form-label" htmlFor="schedule-instructions-input">
+                    Resident Directives & Instructions
+                  </label>
                   <textarea
+                    id="schedule-instructions-input"
                     className="form-textarea"
                     rows="3"
                     placeholder="e.g. Place bins outside door before 7:45 AM. Ensure dry waste is tied."
@@ -2403,10 +2887,18 @@ export default function App() {
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.25rem' }}>
-                  <button type="button" className="btn-secondary" onClick={() => setScheduleModalOpen(false)}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setScheduleModalOpen(false)}
+                  >
                     Cancel
                   </button>
-                  <button type="submit" className="btn-primary" disabled={scheduleLoading}>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    disabled={scheduleLoading}
+                  >
                     {scheduleLoading ? 'Saving...' : scheduleModalMode === 'create' ? 'Create Schedule' : 'Save Changes'}
                   </button>
                 </div>
@@ -2417,8 +2909,8 @@ export default function App() {
 
         {/* Floating Toast Notification */}
         {toastMessage && (
-          <div className="toast">
-            <span>ℹ️</span>
+          <div className="toast" role="status" aria-live="polite">
+            <span aria-hidden="true">ℹ️</span>
             <span>{toastMessage}</span>
           </div>
         )}
